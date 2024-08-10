@@ -1,0 +1,100 @@
+---
+- name: Configure nodes for Kubernetes cluster
+  hosts: rpi
+  become: yes
+  become_method: sudo 
+  remote_user: adamwallis
+
+  tasks:
+  - name: Get DEB architecture
+    ansible.builtin.shell: dpkg --print-architecture
+    register: deb_architecture
+
+  - name: Disable swap
+    ansible.builtin.command: swapoff -a
+    become: true
+
+  - name: Disable swap in fstab 
+    replace:
+      path: /etc/fstab
+      regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+      replace: '# \1'
+
+  - name: Remove Docker if present
+    ansible.builtin.apt:
+      name:
+      - docker
+      - docker-engine
+      - docker.io
+      - containerd
+      - runc
+      state: absent
+
+      # omitted
+      # snap rm docker 
+
+  - name: Install prerequisites
+    ansible.builtin.apt:
+      name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      state: present
+      update_cache: yes
+
+  - name: Ensure keyrings directory exists
+    ansible.builtin.file:
+      path: /etc/apt/keyrings
+      state: directory
+
+
+  - name: Add the Docker repo 
+    block:
+    - name: Add keyring
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.gpg
+
+    - name: Add repo
+      ansible.builtin.apt_repository:
+        filename: 
+        repo: "deb [arch={{ deb_architecture }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+  - name: Install containerd
+    ansible.builtin.apt:
+      name:
+        - containerd.io
+      state: present
+      update_cache: yes
+
+  - name: Ensure containerd config directory exists
+    ansible.builtin.file:
+      path: /etc/containerd
+      state: directory
+
+  - name: Create containerd configuration
+    shell: containerd config default | sudo tee /etc/containerd/config.toml
+
+  - name: Load modules for containerd 
+    ansible.builtin.blockinfile:
+      path: /etc/modules-load.d/containerd.conf
+      block: |
+        overlay
+        br_filter
+
+  - name: Restart containerd service 
+    systemd_service:
+      name: containerd
+      state: restarted
+
+  - name: Enable cgroups limit support
+    shell: sudo sed -i '$ s/$/ cgroup_enable=cpuset cgroup_enable=memory cgroup_memory=1 swapaccount=1/' /boot/firmware/cmdline.txt
+
+  - name: Configure IPTables
+    ansible.builtin.blockinfile:
+      path: /etc/sysctl.d/k8s.conf
+      block: |
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.bridge.bridge-nf-call-iptables = 1

@@ -1,0 +1,11 @@
+[rpi]
+controlplane
+worker-1
+worker-2
+
+[controlplane]
+controlplane
+
+[workers]
+worker-1
+worker-2
