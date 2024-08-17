@@ -6,10 +6,6 @@
   remote_user: adamwallis
 
   tasks:
-  - name: Get DEB architecture
-    ansible.builtin.shell: dpkg --print-architecture
-    register: deb_architecture
-
   - name: Disable swap
     ansible.builtin.command: swapoff -a
     become: true
@@ -48,24 +44,23 @@
       path: /etc/apt/keyrings
       state: directory
 
-
-  - name: Add the Docker repo 
-    block:
-    - name: Add keyring
-      ansible.builtin.get_url:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        dest: /etc/apt/keyrings/docker.gpg
-
-    - name: Add repo
-      ansible.builtin.apt_repository:
-        filename: 
-        repo: "deb [arch={{ deb_architecture }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
-        state: present
+  - name: Add Docker keyring
+    ansible.builtin.get_url:
+      url: https://download.docker.com/linux/debian/gpg
+      dest: /etc/apt/keyrings/docker-apt-keyring.asc
+      mode: "0644"
+      force: true
+      
+  - name: Add Docker repo
+    ansible.builtin.apt_repository:
+      repo: "deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }} signed-by=/etc/apt/keyrings/docker-apt-keyring.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+      state: present
+      filename: docker
 
   - name: Install containerd
     ansible.builtin.apt:
       name:
-        - containerd.io
+      - containerd
       state: present
       update_cache: yes
 
@@ -78,9 +73,9 @@
     shell: containerd config default | sudo tee /etc/containerd/config.toml
 
   - name: Load modules for containerd 
-    ansible.builtin.blockinfile:
-      path: /etc/modules-load.d/containerd.conf
-      block: |
+    ansible.builtin.copy:
+      dest: /etc/modules-load.d/containerd.conf
+      content: |
         overlay
         br_filter
 
@@ -98,3 +93,40 @@
       block: |
         net.bridge.bridge-nf-call-ip6tables = 1
         net.bridge.bridge-nf-call-iptables = 1
+      create: true
+
+  - name: Add Kubernetes repo
+    block:
+    - name: Add keyring
+      ansible.builtin.get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: "0644"
+        force: true
+
+    - name: Add repo
+      ansible.builtin.apt_repository:
+        filename: kubernetes
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+        state: present
+
+  - name: Install kubelet, kubeadm and kubectl
+    ansible.builtin.apt:
+      name:
+      - kubelet
+      - kubeadm
+      - kubectl
+      state: present
+      update_cache: yes
+
+  - name: Confgure containerd as a container runtime
+    ansible.builtin.lineinfile:
+      path: /var/lib/kubelet/kubeadm-flags.env
+      regexp: '^KUBELET_KUBEADM_ARGS='
+      line: KUBELET_KUBEADM_ARGS="--pod-infra-container-image=k8s.gcr.io/pause:3.9 --container-runtime-endpoint=unix:///run/containerd/containerd.sock"
+      create: true
+  
+  - name: Enable forward_ipv4
+    ansible.builtin.sysctl:
+      name: net.ipv4.ip_forward
+      value: 1
