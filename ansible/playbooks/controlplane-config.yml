@@ -1,0 +1,39 @@
+---
+- name: Configure controlplane for Kubernetes cluster
+  hosts: cp
+  become: yes
+  become_method: sudo 
+  remote_user: adamwallis
+
+  tasks:
+  - name: Send Kubeadm config file to controlplane
+    ansible.builtin.copy:
+      src: /home/adamwallis/rpi-k8s/k8s/kubeadm-config.yaml
+      dest: /etc/kubernetes/kubeadm-config.yaml
+      owner: adamwallis
+      mode: "0644"      
+
+  - name: Initialize the cluster
+    ansible.builtin.shell: kubeadm init --config /etc/kubernetes/kubeadm-config.yaml >> cluster_initialized.log
+    args:
+      chdir: /home/adamwallis
+      creates: cluster_initialized.log
+
+  - name: Create .kube directory
+    file:
+      path: $HOME/.kube
+      state: directory
+      mode: "0755"
+
+  - name: Copy admin.conf to local config files
+    ansible.builtin.copy:
+      src: /etc/kubernetes/admin.conf
+      dest: /home/adamwallis/.kube/config
+      remote_src: yes
+      owner: adamwallis
+
+  - name: Install Pod Network
+    ansible.builtin.shell: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml >> pod_network_setup.log
+    args:
+      chdir: $HOME
+      creates: pod_network_setup.log

@@ -85,7 +85,21 @@
       state: restarted
 
   - name: Enable cgroups limit support
-    shell: sudo sed -i '$ s/$/ cgroup_enable=cpuset cgroup_enable=memory cgroup_memory=1 swapaccount=1/' /boot/firmware/cmdline.txt
+    ansible.builtin.replace:
+      path: /boot/firmware/cmdline.txt
+      regexp: '^([\w](?!.*\b{{ item }}\b).*)$'
+      replace: '\1 {{ item }}'
+    loop:
+      - "cgroup_enable=cpuset"
+      - "cgroup_memory=1"
+      - "cgroup_enable=memory"
+      - "swapaccount=1"
+
+  - name: Configuring Systemd cgroup driver for containerd
+    lineinfile:
+      path: /etc/containerd/config.toml
+      regexp: "            SystemdCgroup = false"
+      line: "            SystemdCgroup = true"
 
   - name: Configure IPTables
     ansible.builtin.blockinfile:
@@ -126,7 +140,16 @@
       line: KUBELET_KUBEADM_ARGS="--pod-infra-container-image=k8s.gcr.io/pause:3.9 --container-runtime-endpoint=unix:///run/containerd/containerd.sock"
       create: true
   
+  - name: Set bridge-nf-call-ip6tables
+    ansible.builtin.sysctl:
+      name: net.ipv4.ip_forward
+      value: 1
+
   - name: Enable forward_ipv4
     ansible.builtin.sysctl:
       name: net.ipv4.ip_forward
       value: 1
+
+  - name: Reboot
+    ansible.builtin.reboot:
+      
